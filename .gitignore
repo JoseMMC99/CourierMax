@@ -1,0 +1,12 @@
+bin/
+obj/
+*.db
+*.db-shm
+*.db-wal
+.vs/
+.vscode/
+*.user
+appsettings.Development.json
+publish/
+*.PublishSettings
+*.pubxml.user

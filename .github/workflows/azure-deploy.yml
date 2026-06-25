@@ -1,0 +1,63 @@
+name: Build, Test and Deploy to Azure App Service
+
+# Se ejecuta en cada push a main, y permite ejecución manual desde la pestaña Actions.
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  AZURE_WEBAPP_NAME: couriermax-api      # Ajustar al nombre real del App Service en Azure
+  DOTNET_VERSION: '8.0.x'
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore
+        run: dotnet restore CourierMax.sln
+
+      - name: Build
+        run: dotnet build CourierMax.sln --no-restore --configuration Release
+
+      # El pipeline de despliegue se detiene aquí si algún test falla:
+      # nunca se publica una versión que rompa las reglas de negocio.
+      - name: Test
+        run: dotnet test CourierMax.sln --no-build --configuration Release --verbosity normal
+
+      - name: Publish
+        run: dotnet publish src/CourierMax.Api/CourierMax.Api.csproj -c Release -o ./publish --no-build
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-package
+          path: ./publish
+
+  deploy:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: api-package
+          path: ./publish
+
+      # AZURE_WEBAPP_PUBLISH_PROFILE se configura como secret en GitHub
+      # (Settings > Secrets and variables > Actions), nunca en este archivo.
+      # Se descarga desde Azure Portal: App Service > Overview > Get publish profile.
+      - name: Deploy to Azure App Service
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: ./publish
