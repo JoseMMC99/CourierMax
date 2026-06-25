@@ -18,7 +18,7 @@ API REST para la gestión del ciclo de vida de envíos de CourierMax: creación,
 ### Pasos
 
 ```bash
-git clone <url-del-repo>
+git clone https://github.com/JoseMMC99/CourierMax
 cd CourierMax
 
 dotnet restore
@@ -59,11 +59,11 @@ CourierMax.Application    → casos de uso (services), DTOs, validadores, interf
 CourierMax.Domain         → entidades, value objects, excepciones de dominio, interfaces de repos
 ```
 
-`CourierMax.Domain` no depende de ningún otro proyecto — es código C# puro, sin referencias a EF Core ni a ningún framework. Esto permite testear toda la lógica de negocio crítica (máquina de estados, cálculo de tarifas, validación de capacidad) sin necesidad de una base de datos.
+`CourierMax.Domain` no depende de ningún otro proyecto es código C# puro, sin referencias a EF Core ni a ningún framework. Esto permite testear toda la lógica de negocio crítica (máquina de estados, cálculo de tarifas, validación de capacidad) sin necesidad de una base de datos.
 
 ### Por qué Clean Architecture y no CQRS/MediatR
 
-Con 5-6 requerimientos funcionales y un alcance calibrado a ~12h de desarrollo, introducir MediatR con un Command/Handler/Validator por cada operación agrega ceremonia sin un beneficio real: no hay necesidad de desacoplar lecturas de escrituras a este tamaño. Se optó por **Application Services con interfaces** (`IShipmentService`, `IDriverReportService`, etc.) inyectados por DI, que son más legibles para un evaluador y más fáciles de testear con mocks simples. CQRS es una herramienta conocida que aquí se decidió no usar porque no aporta valor proporcional a su costo — esa es la señal de juicio técnico que se buscó priorizar sobre la familiaridad con el patrón.
+Con 5-6 requerimientos funcionales y un alcance calibrado a ~12h de desarrollo, introducir MediatR con un Command/Handler/Validator por cada operación agrega ceremonia sin un beneficio real: no hay necesidad de desacoplar lecturas de escrituras a este tamaño. Se optó por **Application Services con interfaces** (`IShipmentService`, `IDriverReportService`, etc.) inyectados por DI, que son más legibles para un evaluador y más fáciles de testear con mocks simples. CQRS es una herramienta conocida que aquí se decidió no usar porque no aporta valor proporcional a su costo esa es la señal de juicio técnico que se buscó priorizar sobre la familiaridad con el patrón.
 
 ### Por qué EF Core + SQLite y no Dapper o in-memory
 
@@ -73,7 +73,7 @@ SQLite con EF Core Code-First da lo mejor de ambos mundos para una prueba técni
 
 - **Repository pattern** sobre interfaces definidas en `Domain` (`IShipmentRepository`, etc.), implementadas en `Infrastructure`. Aísla el dominio y la capa de aplicación de los detalles de EF Core, y permite mockear los repos en tests unitarios de servicios sin tocar una base de datos real.
 - **Domain exceptions** (`VehicleCapacityExceededException`, `InvalidStatusTransitionException`, etc.) en lugar de retornar `null`/`bool`/códigos de error. Un middleware centralizado (`ExceptionMiddleware`) las traduce a códigos HTTP apropiados (404, 409, 400), evitando try/catch repetidos en cada controller.
-- **Strategy implícita** en `IRateCalculator`: la tarifa base varía según `ServiceType`, pero los recargos (peso, distancia, tipo de paquete) son políticas compartidas que no se modelaron como una Strategy separada por recargo — habría sido indirección sin beneficio (no varían por ningún eje adicional).
+- **Strategy implícita** en `IRateCalculator`: la tarifa base varía según `ServiceType`, pero los recargos (peso, distancia, tipo de paquete) son políticas compartidas que no se modelaron como una Strategy separada por recargo habría sido indirección sin beneficio (no varían por ningún eje adicional).
 - **Value Objects** (`ContactInfo`, `PackageInfo`, `TrackingCode`) para encapsular invariantes de datos que siempre deben viajar juntos y validarse como unidad.
 - **Result pattern NO se usó.** Las excepciones de dominio + middleware centralizado ya dan manejo de errores claro, y son el enfoque más estándar en un equipo .NET típico; agregar un wrapper `Result<T>` habría sido una capa de indirección adicional sin justificación clara para este alcance.
 
@@ -108,17 +108,17 @@ CourierMax.sln
 │       ├── appsettings.Production.json   (plantilla Azure, sin secretos)
 │       └── Program.cs
 └── tests/
-    ├── CourierMax.Domain.Tests/        (Shipment, Vehicle — lógica pura sin mocks)
-    └── CourierMax.Application.Tests/   (RateCalculator, BusinessDayCalculator, VehicleCapacityService, DriverReportService, Validators — con Moq)
+    ├── CourierMax.Domain.Tests/        (Shipment, Vehicle, lógica pura sin mocks)
+    └── CourierMax.Application.Tests/   (RateCalculator, BusinessDayCalculator, VehicleCapacityService, DriverReportService, Validators, con Moq)
 ```
 
 ## Seguridad
 
 Medidas implementadas, con el lugar exacto del código donde se aplican:
 
-- **Prevención de SQL Injection — por diseño, no por sanitización manual.** Todo el acceso a datos pasa por LINQ-to-EF Core (ver `src/CourierMax.Infrastructure/Repositories/`); no hay una sola línea de SQL crudo, interpolado o concatenado en todo el proyecto. Cuando EF Core traduce una expresión como `_context.Shipments.Where(s => s.TrackingCode == trackingCode)` a SQL, genera automáticamente una consulta parametrizada (`WHERE TrackingCode = @p0`), nunca concatena el valor del usuario directamente en el texto del query. Esto es válido incluso para la búsqueda case-insensitive en `CityRepository.GetByNameAsync` (`c.Name.ToLower() == name.ToLower()`), que sigue siendo una comparación parametrizada.
+- **Prevención de SQL Injection, por diseño, no por sanitización manual.** Todo el acceso a datos pasa por LINQ-to-EF Core (ver `src/CourierMax.Infrastructure/Repositories/`); no hay una sola línea de SQL crudo, interpolado o concatenado en todo el proyecto. Cuando EF Core traduce una expresión como `_context.Shipments.Where(s => s.TrackingCode == trackingCode)` a SQL, genera automáticamente una consulta parametrizada (`WHERE TrackingCode = @p0`), nunca concatena el valor del usuario directamente en el texto del query. Esto es válido incluso para la búsqueda case-insensitive en `CityRepository.GetByNameAsync` (`c.Name.ToLower() == name.ToLower()`), que sigue siendo una comparación parametrizada.
 
-- **Validación de entrada en capas (defensa en profundidad).** Cada request pasa por FluentValidation (`src/CourierMax.Application/Validators/Validators.cs`) antes de llegar a cualquier lógica de negocio: formato de teléfono colombiano vía regex (`^[36]\d{9}$`), rangos numéricos (peso 0.1-100kg, dimensiones 1-200cm), y **límites de longitud máxima en todos los campos de texto** (ej. `MaximumLength(300)` en direcciones) que coinciden exactamente con los `HasMaxLength` configurados en `CourierMaxDbContext`. Esto evita que un payload con un string desproporcionado llegue a EF Core y falle recién al guardar con un error 500 confuso — el rechazo ocurre antes, con un 400 claro.
+- **Validación de entrada en capas (defensa en profundidad).** Cada request pasa por FluentValidation (`src/CourierMax.Application/Validators/Validators.cs`) antes de llegar a cualquier lógica de negocio: formato de teléfono colombiano vía regex (`^[36]\d{9}$`), rangos numéricos (peso 0.1-100kg, dimensiones 1-200cm), y **límites de longitud máxima en todos los campos de texto** (ej. `MaximumLength(300)` en direcciones) que coinciden exactamente con los `HasMaxLength` configurados en `CourierMaxDbContext`. Esto evita que un payload con un string desproporcionado llegue a EF Core y falle recién al guardar con un error 500 confuso , el rechazo ocurre antes, con un 400 claro.
 
 - **Manejo centralizado de errores que no filtra información interna.** `ExceptionMiddleware` (`src/CourierMax.Api/Middleware/ExceptionMiddleware.cs`) garantiza que cualquier excepción no anticipada devuelva siempre un mensaje genérico fijo ("Ocurrió un error interno inesperado") con HTTP 500, sin exponer `exception.Message`, stack trace, nombres de tabla o rutas de archivo al cliente. El detalle completo de la excepción solo se escribe en el log del servidor (`_logger.LogError`), nunca en la respuesta HTTP. Solo las excepciones de dominio que se definieron a propósito (con mensajes ya controlados y sin datos sensibles del sistema) llegan al cliente, vía 404/409/400 según corresponda.
 
@@ -126,7 +126,7 @@ Medidas implementadas, con el lugar exacto del código donde se aplican:
 
 - **Rate limiting a nivel de aplicación.** Se configuró un límite de 100 requests por minuto por IP (`builder.Services.AddRateLimiter` en `Program.cs`), como mitigación básica contra abuso simple (scraping del catálogo de envíos, fuerza bruta sobre `/assign`) sin necesitar infraestructura externa como Redis. Azure App Service ya añade protección DDoS de borde por encima de esto.
 
-- **Sin secretos en el repositorio.** La connection string de Azure SQL **nunca** se versiona: `appsettings.Production.json` contiene un placeholder explícito (`__SET_VIA_AZURE_APP_SETTINGS_OR_KEY_VAULT__`) en lugar de un valor real. El valor verdadero se inyecta vía Application Settings de Azure App Service (variables de entorno) o Azure Key Vault — ver sección de despliegue. `appsettings.Development.json` está además excluido en `.gitignore` para que un desarrollador no suba accidentalmente una connection string local con credenciales.
+- **Sin secretos en el repositorio.** La connection string de Azure SQL **nunca** se versiona: `appsettings.Production.json` contiene un placeholder explícito (`__SET_VIA_AZURE_APP_SETTINGS_OR_KEY_VAULT__`) en lugar de un valor real. El valor verdadero se inyecta vía Application Settings de Azure App Service (variables de entorno) o Azure Key Vault, ver sección de despliegue. `appsettings.Development.json` está además excluido en `.gitignore` para que un desarrollador no suba accidentalmente una connection string local con credenciales.
 
 - **Contenedor Docker ejecutado como usuario no-root.** El `Dockerfile` crea un usuario sin privilegios (`adduser --disabled-password`) y cambia a él con `USER appuser` antes de ejecutar la aplicación, de forma que si se explotara una vulnerabilidad de la app dentro del contenedor, el atacante no obtiene privilegios de root del sistema operativo del contenedor.
 
@@ -148,7 +148,7 @@ Azure App Service  ←────────→  Azure SQL Database
 (Linux, .NET 8 runtime)         (servidor + base de datos)
 ```
 
-### Paso 1 — Crear los recursos en Azure
+### Paso 1, Crear los recursos en Azure
 
 Usando Azure CLI (`az login` primero):
 
@@ -186,7 +186,7 @@ az sql server firewall-rule create \
   --name AllowAzureServices \
   --start-ip-address 0.0.0.0 --end-ip-address 0.0.0.0
 
-# App Service Plan (Linux, tier B1 — básico, económico)
+# App Service Plan (Linux, tier B1 , básico, económico)
 az appservice plan create \
   --name $APP_SERVICE_PLAN \
   --resource-group $RESOURCE_GROUP \
@@ -203,7 +203,7 @@ az webapp create \
 
 > La contraseña de SQL **nunca** se escribe en un script versionado en el repo; en este ejemplo de comandos se ejecuta manualmente con la contraseña real, o se pasa como variable de entorno desde una terminal local que no se commitea.
 
-### Paso 2 — Configurar la connection string en App Service (sin secretos en el repo)
+### Paso 2 , Configurar la connection string en App Service (sin secretos en el repo)
 
 ```bash
 CONNECTION_STRING="Server=tcp:${SQL_SERVER_NAME}.database.windows.net,1433;Database=${SQL_DB_NAME};User ID=${SQL_ADMIN_USER};Password=<contraseña-real>;Encrypt=true;TrustServerCertificate=false;Connection Timeout=30;"
@@ -218,9 +218,9 @@ az webapp config appsettings set \
     WEBSITES_PORT="8080"
 ```
 
-`ConnectionStrings__DefaultConnection` (con doble guion bajo) es la convención de ASP.NET Core para mapear variables de entorno a la configuración jerárquica — equivale a `ConnectionStrings:DefaultConnection` en `appsettings.json`, pero inyectado en runtime sin tocar ningún archivo versionado. Para un entorno productivo real, el paso recomendado es usar **Azure Key Vault** + referencias de Key Vault en App Settings, en lugar de texto plano en App Settings; se documenta aquí la alternativa más simple porque cubre el requisito del puesto sin sobre-ingeniería para una prueba técnica.
+`ConnectionStrings__DefaultConnection` (con doble guion bajo) es la convención de ASP.NET Core para mapear variables de entorno a la configuración jerárquica , equivale a `ConnectionStrings:DefaultConnection` en `appsettings.json`, pero inyectado en runtime sin tocar ningún archivo versionado. Para un entorno productivo real, el paso recomendado es usar **Azure Key Vault** + referencias de Key Vault en App Settings, en lugar de texto plano en App Settings; se documenta aquí la alternativa más simple porque cubre el requisito del puesto sin sobre-ingeniería para una prueba técnica.
 
-### Paso 3 — Generar las migraciones de EF Core (una sola vez, antes del primer despliegue)
+### Paso 3 , Generar las migraciones de EF Core (una sola vez, antes del primer despliegue)
 
 Como se usa `Migrate()` con SQL Server (ver justificación en `Program.cs`), las migraciones deben generarse localmente y viajar en el repositorio:
 
@@ -229,11 +229,11 @@ cd src/CourierMax.Api
 dotnet ef migrations add InitialCreate --project ../CourierMax.Infrastructure --startup-project .
 ```
 
-Esto crea la carpeta `src/CourierMax.Infrastructure/Migrations/` con el snapshot del esquema. Se debe commitear al repositorio — `Migrate()` la lee en cada arranque de la app para aplicar cambios pendientes de forma idempotente.
+Esto crea la carpeta `src/CourierMax.Infrastructure/Migrations/` con el snapshot del esquema. Se debe commitear al repositorio , `Migrate()` la lee en cada arranque de la app para aplicar cambios pendientes de forma idempotente.
 
-### Paso 4 — Desplegar
+### Paso 4 , Desplegar
 
-**Opción A — manual (rápida, para una primera verificación):**
+**Opción A , manual (rápida, para una primera verificación):**
 
 ```bash
 az webapp deploy \
@@ -243,14 +243,14 @@ az webapp deploy \
   --type zip
 ```
 
-**Opción B — CI/CD automático (la forma correcta para el día a día):**
+**Opción B , CI/CD automático (la forma correcta para el día a día):**
 
-El workflow en `.github/workflows/azure-deploy.yml` ya está configurado para hacer build, correr todos los tests, y desplegar a Azure App Service en cada push a `main` — **el despliegue se cancela automáticamente si algún test falla**. Solo falta:
+El workflow en `.github/workflows/azure-deploy.yml` ya está configurado para hacer build, correr todos los tests, y desplegar a Azure App Service en cada push a `main` , **el despliegue se cancela automáticamente si algún test falla**. Solo falta:
 
 1. En Azure Portal, ir al App Service → **Overview** → **Get publish profile**, descargar el archivo.
 2. En GitHub, ir a **Settings → Secrets and variables → Actions → New repository secret**, crear `AZURE_WEBAPP_PUBLISH_PROFILE` con el contenido completo de ese archivo.
 3. Ajustar `AZURE_WEBAPP_NAME` en el workflow al nombre real del App Service.
-4. Hacer push a `main` — el pipeline corre automáticamente.
+4. Hacer push a `main` , el pipeline corre automáticamente.
 
 ### Despliegue alternativo vía contenedor Docker
 
@@ -261,7 +261,7 @@ docker build -t couriermax-api:latest .
 docker run -p 8080:8080 -e Database__Provider=Sqlite couriermax-api:latest
 ```
 
-Y en Azure, apuntando el App Service a una imagen en Azure Container Registry o Docker Hub en lugar del runtime nativo — el `WEBSITES_PORT=8080` configurado arriba ya coincide con el puerto expuesto en el Dockerfile.
+Y en Azure, apuntando el App Service a una imagen en Azure Container Registry o Docker Hub en lugar del runtime nativo , el `WEBSITES_PORT=8080` configurado arriba ya coincide con el puerto expuesto en el Dockerfile.
 
 
 ### Crear un envío
